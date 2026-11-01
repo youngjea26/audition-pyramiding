@@ -1,0 +1,67 @@
+name: update-audition
+
+# 매일 한국시간 09:30 (UTC 00:30), 화~토. KRX Open API 는 전 거래일 자료를 다음 날 아침에 올린다.
+on:
+  schedule:
+    - cron: "30 0 * * 2-6"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 수집한 자료를 다음 실행으로 넘긴다. 키마다 새로 저장하고 가장 최근 것을 불러온다.
+      - name: Restore data cache
+        uses: actions/cache/restore@v4
+        with:
+          path: cache
+          key: audition-cache-restore
+          restore-keys: audition-cache-
+
+      - name: Update data and build page
+        env:
+          KRX_API_KEY: ${{ secrets.KRX_API_KEY }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+          KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+        run: python tools/update_all.py .
+
+      # 접근 토큰은 캐시에 남기지 않는다.
+      - name: Drop token before caching
+        run: rm -f cache/kis/kis_token.json
+
+      - name: Save data cache
+        uses: actions/cache/save@v4
+        with:
+          path: cache
+          key: audition-cache-${{ github.run_id }}
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: audition-copy
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
