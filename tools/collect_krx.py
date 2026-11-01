@@ -36,6 +36,7 @@ def fetch(key, endpoint, day):
     url = "https://data-dbg.krx.co.kr/svc/apis/sto/%s?%s" % (
         endpoint, urllib.parse.urlencode({"basDd": day}))
     req = urllib.request.Request(url, headers={"AUTH_KEY": key})
+    err = ""
     for attempt in range(4):
         try:
             with urllib.request.urlopen(req, timeout=30) as r:
@@ -43,10 +44,12 @@ def fetch(key, endpoint, day):
         except urllib.error.HTTPError as e:
             if e.code in (401, 403):
                 sys.exit("인증 실패 HTTP %s (%s) — 키 또는 이용 신청을 확인하세요" % (e.code, endpoint))
+            err = "HTTP %s %s" % (e.code, e.read().decode("utf-8", "replace")[:200])
             time.sleep(2 * (attempt + 1))
-        except Exception:
+        except Exception as e:
+            err = "%s: %s" % (type(e).__name__, e)
             time.sleep(2 * (attempt + 1))
-    sys.exit("재시도 초과: %s %s" % (endpoint, day))
+    sys.exit("재시도 초과: %s %s — 마지막 오류: %s" % (endpoint, day, err))
 
 
 def main():
