@@ -18,7 +18,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 200
     steps:
       - uses: actions/checkout@v4
 
@@ -34,7 +34,9 @@ jobs:
           key: audition-cache-restore
           restore-keys: audition-cache-
 
+      # 단계에 따로 제한 시간을 둔다. 넘겨도 아래 «캐시 저장»이 돌아서, 받은 만큼은 다음 실행으로 이어진다.
       - name: Update data and build page
+        timeout-minutes: 150
         env:
           KRX_API_KEY: ${{ secrets.KRX_API_KEY }}
           DART_API_KEY: ${{ secrets.DART_API_KEY }}
@@ -44,9 +46,11 @@ jobs:
 
       # 접근 토큰은 캐시에 남기지 않는다.
       - name: Drop token before caching
+        if: always()
         run: rm -f cache/kis/kis_token.json
 
       - name: Save data cache
+        if: always()
         uses: actions/cache/save@v4
         with:
           path: cache
