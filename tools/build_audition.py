@@ -6,6 +6,7 @@
 """
 import html
 import json
+import os
 import shutil
 import statistics
 import sys
@@ -16,7 +17,7 @@ FLOOR = int(sys.argv[2])
 FLOOR_TXT = "5000억"
 GZ = "20260729"
 SRC = ROOT / "오디션 피라미딩.html"
-OUT = ROOT / "audition-copy"
+OUT = Path(os.environ["AUD_OUT"]) if os.environ.get("AUD_OUT") else ROOT / "audition-copy"
 B36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 
@@ -68,6 +69,10 @@ def add_provisional_days():
 
 
 PROVISIONAL = add_provisional_days()
+if os.environ.get("AUD_ASOF"):          # 검증용: 이 날짜까지만 쓴다
+    for _d in [x for x in krx if x > os.environ["AUD_ASOF"]]:
+        del krx[_d]
+    PROVISIONAL = [x for x in PROVISIONAL if x in krx]
 RD = sorted(krx)
 N = len(RD)
 LI = N - 1
@@ -76,6 +81,19 @@ ASOF = RD[-1]
 fin_all = json.loads((ROOT / "cache" / "dart" / "fin.json").read_text(encoding="utf-8"))["fin"]
 kis = json.loads((ROOT / "cache" / "kis" / "kis.json").read_text(encoding="utf-8"))
 codes = [c for c, r in krx[ASOF].items() if int(r["MKTCAP"] or 0) >= FLOOR]
+
+# 2022-01 ~ 2025-03 이력(원본이 고점대비·후보 폭 평상 범위에 쓰는 «2022년 이후» 구간). 종목별 [종가, 상장주식수, 거래량].
+hist = {}
+if (ROOT / "cache" / "hist").exists():
+    for p in sorted((ROOT / "cache" / "hist").glob("*.json")):
+        if p.stem < RD[0]:
+            h = json.loads(p.read_text(encoding="utf-8"))
+            if h:
+                hist[p.stem] = h
+HD = sorted(hist)
+ED = HD + RD          # 확장 날짜: 이력 + 화면 구간
+OFF = len(HD)
+EN = len(ED)
 
 
 def b36(v):
@@ -100,16 +118,22 @@ def encode(arr):
 
 
 def build_series(code):
-    cl, sh, vo = [None] * N, [None] * N, [0] * N
-    for i, d in enumerate(RD):
-        r = krx[d].get(code)
-        if r:
-            c = int(r["TDD_CLSPRC"] or 0)
-            if c > 0:
-                cl[i], sh[i], vo[i] = c, int(r["LIST_SHRS"] or 0), int(r["ACC_TRDVOL"] or 0)
+    """확장 날짜(이력 + 화면 구간) 전체의 종가를 만들고 액면분할·병합·무상증자를 보정한다."""
+    cl, sh, vo = [None] * EN, [None] * EN, [0] * EN
+    for i, d in enumerate(ED):
+        if i < OFF:
+            h = hist[d].get(code)
+            if h and h[0] > 0:
+                cl[i], sh[i], vo[i] = h[0], h[1], h[2]
+        else:
+            r = krx[d].get(code)
+            if r:
+                c = int(r["TDD_CLSPRC"] or 0)
+                if c > 0:
+                    cl[i], sh[i], vo[i] = c, int(r["LIST_SHRS"] or 0), int(r["ACC_TRDVOL"] or 0)
     adj = [float(x) if x else None for x in cl]
     last = None
-    for i in range(N):
+    for i in range(EN):
         if cl[i] is None:
             continue
         if last is not None and sh[i] and sh[last]:
@@ -119,13 +143,14 @@ def build_series(code):
                     if adj[k] is not None:
                         adj[k] /= s
         last = i
-    return [round(x) if x else None for x in adj], cl, vo
+    ext = [round(x) if x else None for x in adj]
+    return ext, cl[OFF:], vo[OFF:]
 
 
 S = {}
 for c in codes:
-    adj, raw, vol = build_series(c)
-    S[c] = {"adj": adj, "raw": raw, "vol": vol}
+    ext, raw, vol = build_series(c)
+    S[c] = {"ext": ext, "adj": ext[OFF:], "raw": raw, "vol": vol}
 
 
 def fmt_cap(v):
@@ -186,7 +211,7 @@ for c in codes:
     last = a[LI]
     ma = sum(valid[-240:]) / 240 if len(valid) >= 240 else None
     above = "" if ma is None else ("1" if last > ma else "0")
-    hi = (last / max(valid) - 1) * 100
+    hi = (last / max(x for x in S[c]["ext"] if x) - 1) * 100       # 2022년 이후 고점(이력이 있으면)
     vv = [v for v, x in zip(vol, a) if x]
     vr = ""
     if len(vv) >= 50 and sum(vv[-50:]):
@@ -259,7 +284,7 @@ for c in codes:
         sector=sector, px=int(r["TDD_CLSPRC"]), cap=int(r["MKTCAP"]), fluc=float(r["FLUC_RT"] or 0),
         ret=ret, w1=w1, above=above, hi=hi, vr=vr, opm=opm, roe=roe, debt=debt, pbr=pbr,
         fin=f, is_fin=is_fin, reasons=reasons, grade=grade, persist=persist, gnote=gnote, loss=loss_flag,
-        vc=vc, vct=vct, vcw=vcw, adj=a))
+        vc=vc, vct=vct, vcw=vcw, adj=a, ext=S[c]["ext"]))
 
 by_ret = sorted([s for s in stocks if s["ret"] is not None], key=lambda s: -s["ret"])
 base = [s for s in stocks if s["ret"] is not None]
@@ -344,18 +369,23 @@ labels_s = [f"{int(RD[t][4:6])}/{int(RD[t][6:8])}" for t in range(GI, N)]
 
 # 코스피 지수: 한국투자증권 국내업종 일자별 지수(실제 코스피). 없으면 KRX 일별 자료로 시총가중 수익률을 직접 계산한다.
 kidx, REAL_IDX = None, False
+BD = ED               # 후보 폭을 재는 날짜: 지수가 이력 구간까지 있으면 확장 날짜, 아니면 화면 구간만
 idx_file = ROOT / "cache" / "kis_index" / "kospi.json"
 if idx_file.exists():
     idx = json.loads(idx_file.read_text(encoding="utf-8"))
-    if sum(1 for d in RD if d in idx) >= 0.95 * N:
-        kidx, last_v = [], None
-        for d in RD:
-            last_v = idx.get(d, last_v)
-            kidx.append(last_v)
-        first_v = next(v for v in kidx if v is not None)
-        kidx = [first_v if v is None else v for v in kidx]
-        REAL_IDX = True
+    for cand in (ED, RD):
+        if sum(1 for d in cand if d in idx) >= 0.95 * len(cand):
+            BD = cand
+            kidx, last_v = [], None
+            for d in BD:
+                last_v = idx.get(d, last_v)
+                kidx.append(last_v)
+            first_v = next(v for v in kidx if v is not None)
+            kidx = [first_v if v is None else v for v in kidx]
+            REAL_IDX = True
+            break
 if kidx is None:
+    BD = RD
     kidx = [1.0] * N
     for t in range(1, N):
         if RD[t] in PROVISIONAL or RD[t - 1] in PROVISIONAL:      # 일부 종목만 있는 날은 지수를 못 만든다
@@ -372,17 +402,28 @@ if kidx is None:
                 den += c0
         kidx[t] = kidx[t - 1] * (num / den if den else 1)
 W = 60
-breadth, blabels = [], []
-for t in range(W, N):
-    kr = kidx[t] / kidx[t - W] - 1
-    tot = win = 0
-    for s in stocks:
-        a = s["adj"]
-        if a[t] and a[t - W]:
-            tot += 1
-            win += (a[t] / a[t - W] - 1) > kr
-    breadth.append(round(win / tot * 100, 1))
-    blabels.append(f"{RD[t][4:6]}-{RD[t][6:8]}")
+SER = "ext" if BD is ED else "adj"           # BD 와 날짜가 맞는 종가 계열
+CAP_OPTS = {"5000": 5e11, "7000": 7e11, "10000": 1e12, "15000": 1.5e12, "20000": 2e12}
+
+
+def breadth_for(T):
+    """시총 T 이상 종목 가운데 최근 60거래일 수익률이 코스피를 이긴 비율(%) — BD 의 W 번째 날부터 매일."""
+    sub = [s[SER] for s in stocks if s["cap"] >= T]
+    out = []
+    for t in range(W, len(BD)):
+        kr = kidx[t] / kidx[t - W] - 1
+        tot = win = 0
+        for a in sub:
+            if a[t] and a[t - W]:
+                tot += 1
+                win += (a[t] / a[t - W] - 1) > kr
+        out.append(round(win / tot * 100, 1) if tot else 0.0)
+    return out
+
+
+BR = {k: breadth_for(v) for k, v in CAP_OPTS.items()}     # 시총 선택 5가지를 미리 계산해 둔다(화면은 이 중에서 고른다)
+breadth = BR["5000"]
+blabels = [f"{BD[t][2:4]}-{BD[t][4:6]}-{BD[t][6:8]}" for t in range(W, len(BD))]
 b_now = breadth[-1]
 b_med = statistics.median(breadth)
 qs = statistics.quantiles(breadth, n=20)
@@ -523,9 +564,9 @@ setl(986, "이익이 급변하는", "      이익이 급변하는 종목은 실�
 L[986] = ""
 rep(991, "시총 1조 이상", M)
 rep(992, "강의 기준 그대로이다.", f"강의의 기준은 1조이지만 이 복제본은 {FLOOR_TXT}으로 넓혔다.")
-rep(1004, "2022년 이후 고점", f"{d_iso(RD[0])} 이후 고점")
+rep(1004, "2022년 이후 고점", f"{d_iso(ED[0])} 이후 고점")
 setl(1006, "⚠ 2026-09-11", "      ⚠ <b>52주가 아니라 보유 자료 전체의 고점이다.</b> 강의가 말하는 것은 52주 고점이 아니라")
-rep(1007, "1177거래일", f"{N}거래일")
+rep(1007, "1177거래일", f"{EN}거래일")
 rep(1013, "시총 1조원 이상", f"시총 {FLOOR_TXT}원 이상")
 setl(1016, "강의의 재무 등급", (
     f'    <dd>강의의 재무 등급 기준을 따른다. <b>특등급 = OPM 40%+ &amp; ROE 20%+</b>, <b>1등급 = OPM 20%+ &amp; ROE 10%+</b>, '
@@ -541,7 +582,7 @@ setl(1022, "강의의 수급 크로스는", (
     "  강의의 수급 크로스는 품절주(대주주와 외국인이 90% 초과)와 1급수(외국인·기관 쌍끌이 매수)인데, 이 복제본은 외국인·기관 일별 순매수로 "
     "1급수만 잰다. 품절주는 지분 자료가 없어 못 잰다."))
 L[1022] = ""
-rep(1024, "2022년 이후 고점", f"{d_iso(RD[0])} 이후 고점")
+rep(1024, "2022년 이후 고점", f"{d_iso(ED[0])} 이후 고점")
 setl(1030, 'data-sm="sec"', f'    <button class="on" data-sm="sec">KRX 업종 <span>{sec_n}</span></button>')
 L[1030] = ""
 setl(1032, "filt-note", '    <span class="filt-note">업종은 한 종목에 하나가 붙습니다</span>')
@@ -559,7 +600,7 @@ L[1034] = (
     '테마 분류는 출처가 없어 싣지 않았다.</p>')
 L[1070] = '  <div id="mcsum" class="mcsum"></div>'
 must(1071, "mcsum") if False else None
-rep(1080, "2022년 이후 고점", f"{d_iso(RD[0])} 이후 고점")
+rep(1080, "2022년 이후 고점", f"{d_iso(ED[0])} 이후 고점")
 rep(1094, "주도업종은 종목별 업종 자료가 없어 이 덱에 '없습니다'.", "주도업종은 위 「지금 어느 업종이 움직이나」에서 업종별 중앙 수익률로 봅니다.")
 # 실적 탈락 · 탈락 하위 10
 rep(1100, '<span class="sub2">35종목</span>', f'<span class="sub2" id="cutcnt">{len(cut_pos)}종목</span>')
@@ -583,7 +624,7 @@ if not REAL_IDX:
 setl(1164, "42.6%", f'      <div class="v" id="b-now" style="color:#2563eb">{b_now:.1f}%</div>')
 setl(1165, "10/28 기준", f'      <div class="s" id="b-now-s">{RD[-1][4:6].lstrip("0")}/{RD[-1][6:].lstrip("0")} 기준 · <b>{b_word}</b></div></div>')
 rep(1166, '<div class="v" style="font-size:1.5rem">49%</div>', f'<div class="v" id="b-med" style="font-size:1.5rem">{b_med:.0f}%</div>')
-rep(1167, "2022년 이후 1117거래일 중앙값", f"{d_iso(RD[W])} 이후 {len(breadth)}거래일 중앙값")
+rep(1167, "2022년 이후 1117거래일 중앙값", f"{d_iso(BD[W])} 이후 {len(breadth)}거래일 중앙값")
 rep(1168, '<div class="v" style="font-size:1.5rem;color:#f59e0b">42%</div>',
     f'<div class="v" id="b-narrow" style="font-size:1.5rem;color:#f59e0b">{b_narrow:.0f}%</div>')
 rep(1170, '<div class="v" style="font-size:1.5rem;color:#dc2626">31%</div>',
@@ -623,7 +664,7 @@ L[1225] = None
 setl(1227, "<footer>", (
     "<footer><p>본 자료는 정보 제공·교육 목적이며 투자 권유가 아니다. 투자의 최종 판단과 책임은 투자자 본인에게 있다. · "
     "방법론: 이야기꾼 시나리오투자법(3MC 오디션 피라미딩) · "
-    f"데이터: KRX Open API 코스피·코스닥 전종목 일별매매정보(이력, {d_iso(RD[0])}~{d_iso(ASOF)}) · "
+    f"데이터: KRX Open API 코스피·코스닥 전종목 일별매매정보(이력, {d_iso(ED[0])}~{d_iso(ASOF)}) · "
     "한국투자증권 Open API(업종 · PBR · 투자자별 매매동향 · 장 마감 직후 시세 · 코스피 지수) · DART Open API(최신 반기 주요계정 · 사업보고서 3년치). 기준일이 휴장이면 직전 거래일로 자동 보정된다. "
     "이 페이지는 「찰리의 시투 추종」의 오디션 피라미딩 페이지를 제작자의 허락을 받아 복제하고, 시총 기준을 "
     f"{FLOOR_TXT} 이상으로 바꿔 데이터를 새로 수집해 만든 것이다.</p></footer>"))
@@ -691,7 +732,7 @@ CAP_JS = r"""
     var arrs=[], uni=[], n=0, kp=0, kq=0, sv=0, svq=0, sa=0;
     for(var c in META){
       if(META[c][1]<CAPMIN)continue;
-      var a=px(c); if(!a)continue; arrs.push(a);
+      var a=px(c); if(!a)continue;
       if(a[GI]){
         var q=META[c][0]; uni.push(a); n++; if(q)kq++; else kp++;
         if(a[LI]&&a[LI]>a[GI]){ sv++; if(q)svq++; if(META[c][2]===1)sa++; }
@@ -712,12 +753,8 @@ CAP_JS = r"""
       var k=0; for(var i=0;i<uni.length;i++){ var u=uni[i]; if(u[t]&&u[t]>u[GI])k++; }
       cnt.push(k); rt.push(n?Math.round(k/n*1000)/10:0);
     }
-    var W=60, br=[];
-    for(var t2=W;t2<RD.length;t2++){
-      var kr=KIDX[t2]/KIDX[t2-W]-1, tot=0, win=0;
-      for(var j=0;j<arrs.length;j++){ var b=arrs[j]; if(b[t2]&&b[t2-W]){ tot++; if(b[t2]/b[t2-W]-1>kr)win++; } }
-      br.push(tot?Math.round(win/tot*1000)/10:0);
-    }
+    // 후보 폭은 시총 선택 5가지를 파이썬이 2022년 이후 이력까지 미리 계산해 둔다
+    var br=(BR[capKey()]||BR['5000']).slice();
     var now=br[br.length-1], srt=br.slice().sort(function(x,y){return x-y});
     var med=qtl(srt,0.5), nar=qtl(srt,0.25), ext=qtl(srt,0.10), wide=qtl(srt,0.75);
     var word=now<=ext?'극단적으로 좁은':(now<=nar?'좁은':(now>=wide?'넓은':'보통'));
@@ -756,7 +793,7 @@ CAP_JS = r"""
 data_js = "\n".join([
     "  var RD=" + json.dumps(RD) + ";",
     "  var META=" + json.dumps(meta, separators=(",", ":")) + ";",
-    "  var KIDX=" + json.dumps([round(x, 6) for x in kidx]) + ";",
+    "  var BR=" + json.dumps(BR, separators=(",", ":")) + ";",
     "  var PXS=" + json.dumps(pxs, ensure_ascii=False, separators=(",", ":")) + ";",
     "  var FLW=" + json.dumps(flw, separators=(",", ":")) + ";",
     "  var SECOF=" + json.dumps(secof, ensure_ascii=False, separators=(",", ":")) + ";",
@@ -805,13 +842,14 @@ def check_at(T):
     sub = [s for s in stocks if s["cap"] >= T]
     uni = [s for s in sub if s["adj"][GI]]
     sv = sum(1 for s in uni if s["adj"][LI] and s["adj"][LI] > s["adj"][GI])
-    kr = kidx[LI] / kidx[LI - W] - 1
+    BE = len(BD) - 1
+    kr = kidx[BE] / kidx[BE - W] - 1
     tot = win = 0
     for s in sub:
-        a = s["adj"]
-        if a[LI] and a[LI - W]:
+        a = s[SER]
+        if a[BE] and a[BE - W]:
             tot += 1
-            win += (a[LI] / a[LI - W] - 1) > kr
+            win += (a[BE] / a[BE - W] - 1) > kr
     return dict(T=T, universe=len(uni), survivors=sv, breadth=round(win / tot * 100, 1))
 
 

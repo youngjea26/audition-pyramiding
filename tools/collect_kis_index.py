@@ -85,6 +85,7 @@ def main():
     f = out / "kospi.json"
     have = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
     newest = max(have) if have else None
+    covered = bool(have) and min(have) <= start        # 이미 시작일까지 받아 둔 상태인가
     now = dt.datetime.now(KST)
     today = now.strftime("%Y%m%d")
     closed = (now.hour, now.minute) >= CLOSE_HHMM
@@ -102,7 +103,8 @@ def main():
             if d and (d != today or closed):
                 have[d] = v
         oldest = min(r["stck_bsop_date"] for r in rows if r.get("stck_bsop_date"))
-        if oldest <= start or (newest and oldest <= newest):
+        # 받아 둔 구간과 겹치면 멈춘다. 단 시작일까지 못 받은 상태면 더 과거로 계속 간다.
+        if oldest <= start or (covered and newest and oldest <= newest):
             break
         nxt = (dt.datetime.strptime(oldest, "%Y%m%d") - dt.timedelta(days=1)).strftime("%Y%m%d")
         if nxt >= day:

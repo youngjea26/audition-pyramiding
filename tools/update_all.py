@@ -25,6 +25,9 @@ FLOW = str(ROOT / "cache" / "kis_flow")
 FLOOR = "500000000000"         # 화면에 올리는 기준: 시총 5000억
 BUFFER = "400000000000"        # 수집은 4000억부터 — 당일 5000억을 넘어 새로 들어오는 종목을 놓치지 않는다
 START = "20250401"
+HIST_START = "20220103"       # 원본이 쓰는 «2022년 이후» 구간 — 고점대비·후보 폭 평상 범위
+HIST_END = "20250331"
+HIST = ROOT / "cache" / "hist"
 
 KST = dt.timezone(dt.timedelta(hours=9))
 today = dt.datetime.now(KST).date()
@@ -72,13 +75,14 @@ def reconcile_krx():
         print("경고: 다시 받아도 KRX 가 비어 있는 거래일", still, flush=True)
 
 
-for sub in ("krx", "dart", "kis", "kis_daily", "kis_index", "kis_flow"):
+for sub in ("krx", "hist", "dart", "kis", "kis_daily", "kis_index", "kis_flow"):
     (ROOT / "cache" / sub).mkdir(parents=True, exist_ok=True)
 
-run("collect_kis_index.py", ENV, KIS_INDEX, START)
+run("collect_kis_index.py", ENV, KIS_INDEX, HIST_START)
 run("collect_krx.py", ENV, KRX, START, today.strftime("%Y%m%d"))
 run("collect_krx.py", ENV, KRX, f"{annual_year - 1}1220", f"{annual_year - 1}1231")   # 재무 크로스용 전전년 연말 시총
 reconcile_krx()
+run("collect_krx_history.py", ENV, KRX, HIST, KIS_INDEX / "kospi.json", HIST_START, HIST_END, "200000000000")
 run("collect_dart.py", ENV, KRX, DART, BUFFER, report_year)
 run("collect_dart_annual.py", ENV, KRX, DART, BUFFER, annual_year)
 run("collect_kis.py", ENV, KRX, KIS, BUFFER, "all", "refresh")
