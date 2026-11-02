@@ -1,4 +1,4 @@
-﻿"""KRX Open API 일별매매정보를 날짜별 JSON 캐시로 받는다. 이미 받은 날짜는 건너뛴다.
+"""KRX Open API 일별매매정보를 날짜별 JSON 캐시로 받는다. 이미 받은 날짜는 건너뛴다.
 
 사용: python -I collect_krx.py <env 경로> <캐시 폴더> <시작일 YYYYMMDD> <종료일 YYYYMMDD>
 """
@@ -11,6 +11,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+KST = dt.timezone(dt.timedelta(hours=9))
 ENDPOINTS = (("KOSPI", "stk_bydd_trd"), ("KOSDAQ", "ksq_bydd_trd"))
 KEEP = ("ISU_CD", "ISU_NM", "MKT_NM", "SECT_TP_NM", "TDD_CLSPRC", "FLUC_RT",
         "ACC_TRDVOL", "ACC_TRDVAL", "MKTCAP", "LIST_SHRS")
@@ -76,8 +77,10 @@ def main():
                 rec["MKT"] = name
                 rows.append(rec)
             time.sleep(0.15)
-        if not rows and (dt.date.today() - dt.datetime.strptime(day, "%Y%m%d").date()).days <= 4:
-            continue          # 최근 며칠의 빈 응답은 아직 미게시일 수 있어 캐시하지 않는다
+        if not rows and (dt.datetime.now(KST).date() - dt.datetime.strptime(day, "%Y%m%d").date()).days <= 14:
+            # 빈 응답은 휴장일 수도, 아직 미게시이거나 KRX 가 일시적으로 비워 준 것일 수도 있다.
+            # 최근 2주는 캐시하지 않아 다음 실행이 다시 조회한다. 더 오래된 날의 교차 검증은 update_all.py 가 한다.
+            continue
         f.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
         if rows:
             got += 1

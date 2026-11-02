@@ -84,6 +84,8 @@ def parse(items, rpt):
         cc, nm, div = it.get("corp_code"), it.get("account_nm", "").strip(), it.get("fs_div")
         if nm.startswith("당기순이익"):
             nm = "당기순이익"          # 보고서에는 「당기순이익(손실)」로 온다
+        if nm.startswith("영업이익"):
+            nm = "영업이익"            # 「영업이익(손실)」로 오는 회사도 있다
         if nm not in ("매출액", "영업이익", "당기순이익", "자산총계", "부채총계", "자본총계", "수익(매출액)"):
             continue
         nm = "매출액" if nm == "수익(매출액)" else nm

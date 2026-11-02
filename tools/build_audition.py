@@ -1,4 +1,4 @@
-﻿"""오디션 피라미딩 페이지 복제본 생성기.
+"""오디션 피라미딩 페이지 복제본 생성기.
 
 원본 HTML(저장본)을 템플릿으로 쓰고, KRX·DART·KIS 캐시로 종목 행·종가 이력·차트·요약 문구를 다시 채운다.
 사용: python -I build_audition.py <my-agent 폴더> <시총 하한(원)>
@@ -31,6 +31,43 @@ def load_krx():
 
 
 krx = load_krx()
+LAST_KRX = max(krx)
+
+
+def add_provisional_days():
+    """KRX 확정 자료가 아직 없는 날(보통 오늘)을 한국투자증권 일자별 시세로 채운다.
+
+    KRX 마지막 날의 종목 정보(이름·시장·상장주식수)를 그대로 쓰고, 종가·거래량·등락률만 새로 얹는다.
+    시가총액 = 종가 × 상장주식수(KRX 의 정의와 같다). 종목의 90% 이상이 받아진 날만 쓴다.
+    """
+    ddir = ROOT / "cache" / "kis_daily"
+    if not (ddir / "_meta.json").exists():
+        return []
+    base = krx[LAST_KRX]
+    per_day, files = {}, 0
+    for p in ddir.glob("*.json"):
+        if p.stem.startswith("_") or p.stem not in base:
+            continue
+        files += 1
+        b = base[p.stem]
+        shares = int(b["LIST_SHRS"] or 0)
+        for d, (c, v, f) in json.loads(p.read_text(encoding="utf-8")).items():
+            if d > LAST_KRX:
+                per_day.setdefault(d, {})[p.stem] = {
+                    "ISU_CD": p.stem, "ISU_NM": b["ISU_NM"], "MKT": b["MKT"], "MKT_NM": b.get("MKT_NM", b["MKT"]),
+                    "SECT_TP_NM": b.get("SECT_TP_NM", ""), "TDD_CLSPRC": str(c), "FLUC_RT": str(f),
+                    "ACC_TRDVOL": str(v), "ACC_TRDVAL": "0", "MKTCAP": str(c * shares), "LIST_SHRS": str(shares)}
+    used = []
+    for d in sorted(per_day):
+        if files and len(per_day[d]) >= 0.9 * files:
+            krx[d] = per_day[d]
+            used.append(d)
+        else:
+            print(f"경고: {d} 는 받아진 종목이 {len(per_day[d])}/{files}개뿐이라 쓰지 않는다")
+    return used
+
+
+PROVISIONAL = add_provisional_days()
 RD = sorted(krx)
 N = len(RD)
 LI = N - 1
@@ -182,23 +219,29 @@ for c in codes:
         rv = [x["rev"] for x in ai["rows"]]
         if None not in rv and rv[0] > rv[1] > rv[2]:
             reasons.append("매출 2년 연속 감소")
-    if not reasons:
-        r0, r1, r2 = ai["rows"] if ai else (None, None, None)
-        if ai and r2["g"]:
-            grade = r2["g"]
-            persist = bool(r0["g"] and r0["g"] == r1["g"] == r2["g"])
-            parts = ["연간 기준"] + (["3년 지속"] if persist else [])
-            if r1["roe"] is not None and r2["roe"] is not None:
-                parts.append("ROE " + ("↑" if r2["roe"] > r1["roe"] else "↓"))
-            if r1["rev"] and r2["rev"]:
-                parts.append("매출 " + ("↑" if r2["rev"] > r1["rev"] else "↓"))
-            gnote = " · ".join(parts)
-        elif f and (roe is not None or opm is not None):
-            grade = grade_of(opm, roe, None, None)
-            gnote = f'{f.get("보고서", "")} 기준 (사업보고서 없음)'
-        if grade and not is_fin and debt is not None and debt >= 100 and grade > 1:
-            grade = 1
-            gnote += f" · 부채비율 {debt}% (100% 이상이라 2등급으로 내림)"
+    # 등급은 실적 탈락 종목에도 매긴다(원본도 탈락 표에 등급을 보인다). 적자 종목만 등급 대신 «적자»로 표시한다.
+    loss_flag = "적자" in reasons
+    r0, r1, r2 = ai["rows"] if ai else (None, None, None)
+    raw_persist = False
+    if ai and r2["g"] and not loss_flag:
+        grade = r2["g"]
+        raw_persist = bool(r0["g"] and r0["g"] == r1["g"] == r2["g"])
+        parts = ["연간 기준"]
+        if r1["roe"] is not None and r2["roe"] is not None:
+            parts.append("ROE " + ("↑" if r2["roe"] > r1["roe"] else "↓"))
+        if r1["rev"] and r2["rev"]:
+            parts.append("매출 " + ("↑" if r2["rev"] > r1["rev"] else "↓"))
+        gnote = " · ".join(parts)
+    elif f and not loss_flag and (roe is not None or opm is not None):
+        grade = grade_of(opm, roe, None, None)
+        gnote = f'{f.get("보고서", "")} 기준 (사업보고서 없음)'
+    if grade and not is_fin and debt is not None and debt >= 100 and grade > 1:
+        grade = 1
+        gnote += f" · 부채비율 {debt}% (100% 이상이라 2등급으로 내림)"
+    # ★ 는 특등급·1등급이 3년 내내 같은 등급일 때만 붙는다(2등급은 «그 밖의 흑자»라 지속을 따지지 않는다 — 원본도 그렇다).
+    persist = bool(raw_persist and grade and grade >= 2)
+    if persist:
+        gnote = gnote.replace("연간 기준", "연간 기준 · 3년 지속", 1)
     # 재무 크로스: ROE 가 늘고 PER 이 줄었나 (최근 두 해, 사업보고서 기준)
     vc, vct, vcw = "-", "", ""
     if ai and not ai["pref"]:
@@ -215,7 +258,7 @@ for c in codes:
         code=c, name=r["ISU_NM"].strip(), mkt="코스피" if r["MKT"] == "KOSPI" else "코스닥",
         sector=sector, px=int(r["TDD_CLSPRC"]), cap=int(r["MKTCAP"]), fluc=float(r["FLUC_RT"] or 0),
         ret=ret, w1=w1, above=above, hi=hi, vr=vr, opm=opm, roe=roe, debt=debt, pbr=pbr,
-        fin=f, is_fin=is_fin, reasons=reasons, grade=grade, persist=persist, gnote=gnote,
+        fin=f, is_fin=is_fin, reasons=reasons, grade=grade, persist=persist, gnote=gnote, loss=loss_flag,
         vc=vc, vct=vct, vcw=vcw, adj=a))
 
 by_ret = sorted([s for s in stocks if s["ret"] is not None], key=lambda s: -s["ret"])
@@ -256,18 +299,20 @@ def row(s, rank, why=None):
         gc, gt = GRADE[s["grade"]]
         grade = (f'<td class="c" data-v="{s["grade"]}"><span class="grd {gc}" title="{esc(s["gnote"])}">'
                  f'{gt}{"★" if s["persist"] else ""}</span></td>')
+    elif s["loss"]:
+        grade = '<td class="c" data-v="0"><span class="grd g0">적자</span></td>'
     else:
         grade = '<td class="c" data-v="0">-</td>'
-    debt = ('<td class="n" data-v="-9999">-</td>' if s["debt"] is None or s["is_fin"]
+    debt = ('<td class="n" data-v="-9999">-</td>' if s["debt"] is None
             else num_td(s["debt"], f'{s["debt"]}%'))
-    gname = GRADE[s["grade"]][1] if s["grade"] else ""
+    gname = GRADE[s["grade"]][1] if s["grade"] else ("적자" if s["loss"] else "")
     attrs = (f'data-mkt="{s["mkt"]}" data-c="{s["code"]}" data-nm="{esc(s["name"])}" '
              f'data-capt="{fmt_cap(s["cap"])}" data-cap="{s["cap"]}" '
              f'data-w1="{"" if w1 is None else round(w1, 4)}" data-above="{s["above"]}" '
              f'data-hi="{round(s["hi"], 4)}" data-vr="{"" if s["vr"] == "" else round(s["vr"], 4)}" '
              f'data-grade="{gname}" data-persist="{"1" if s["persist"] else ""}" '
              f'data-opm="{"" if s["opm"] is None else s["opm"]}" '
-             f'data-debt="{"" if s["debt"] is None or s["is_fin"] else s["debt"]}" data-p="{p}" data-vc="{s["vc"]}"'
+             f'data-debt="{"" if s["debt"] is None else s["debt"]}" data-p="{p}" data-vc="{s["vc"]}"'
              + (f' data-vct="{esc(s["vct"])}" data-vcw="{esc(s["vcw"])}"' if s["vct"] else ""))
     mk = "mk1" if s["mkt"] == "코스피" else "mk2"
     fl = s["fluc"]
@@ -297,19 +342,35 @@ for t in range(GI, N):
     surv_rate.append(round(k / len(univ0) * 100, 1))
 labels_s = [f"{int(RD[t][4:6])}/{int(RD[t][6:8])}" for t in range(GI, N)]
 
-# 코스피 시총가중 지수(직접 계산) — 코스피 지수 API 권한이 없어 대신 쓴다
-kidx = [1.0] * N
-for t in range(1, N):
-    a, b = krx[RD[t - 1]], krx[RD[t]]
-    num = den = 0
-    for c, r in b.items():
-        if r["MKT"] != "KOSPI" or c not in a:
+# 코스피 지수: 한국투자증권 국내업종 일자별 지수(실제 코스피). 없으면 KRX 일별 자료로 시총가중 수익률을 직접 계산한다.
+kidx, REAL_IDX = None, False
+idx_file = ROOT / "cache" / "kis_index" / "kospi.json"
+if idx_file.exists():
+    idx = json.loads(idx_file.read_text(encoding="utf-8"))
+    if sum(1 for d in RD if d in idx) >= 0.95 * N:
+        kidx, last_v = [], None
+        for d in RD:
+            last_v = idx.get(d, last_v)
+            kidx.append(last_v)
+        first_v = next(v for v in kidx if v is not None)
+        kidx = [first_v if v is None else v for v in kidx]
+        REAL_IDX = True
+if kidx is None:
+    kidx = [1.0] * N
+    for t in range(1, N):
+        if RD[t] in PROVISIONAL or RD[t - 1] in PROVISIONAL:      # 일부 종목만 있는 날은 지수를 못 만든다
+            kidx[t] = kidx[t - 1]
             continue
-        c1, c0 = int(r["MKTCAP"] or 0), int(a[c]["MKTCAP"] or 0)
-        if c0 > 0 and c1 > 0 and abs(c1 / c0 - 1) <= 0.31:
-            num += c1
-            den += c0
-    kidx[t] = kidx[t - 1] * (num / den if den else 1)
+        a, b = krx[RD[t - 1]], krx[RD[t]]
+        num = den = 0
+        for c, r in b.items():
+            if r["MKT"] != "KOSPI" or c not in a:
+                continue
+            c1, c0 = int(r["MKTCAP"] or 0), int(a[c]["MKTCAP"] or 0)
+            if c0 > 0 and c1 > 0 and abs(c1 / c0 - 1) <= 0.31:
+                num += c1
+                den += c0
+        kidx[t] = kidx[t - 1] * (num / den if den else 1)
 W = 60
 breadth, blabels = [], []
 for t in range(W, N):
@@ -409,8 +470,10 @@ L[792] = (
     '<button data-cap="10000">1조</button><button data-cap="15000">1.5조</button><button data-cap="20000">2조</button>'
     '<span class="filt-note">이상 · 최신 시가총액 기준 · 표·업종·3MC·요약 숫자·차트가 모두 따라 바뀝니다</span></div>\n'
     '<div class="stats">')
+prov = ASOF in PROVISIONAL
+src_note = (f' · <b>{d_iso(ASOF)} 값은 장 마감 직후 한국투자증권 자료(KRX 확정 자료는 다음 영업일 반영)</b>' if prov else "")
 setl(792, "기준일 2026-10-28",
-     f'<p class="pauth">기준일 {d_iso(ASOF)} · KRX Open API · DART · 한국투자증권 · 직접 수집</p></header>')
+     f'<p class="pauth">기준일 {d_iso(ASOF)} · KRX Open API · DART · 한국투자증권 · 직접 수집{src_note}</p></header>')
 setl(794, "오디션 대상",
      f'  <div class="stat" id="st-univ"><div class="l">오디션 대상</div><div class="v">{len(univ0)}</div>'
      f'<div class="s">{M_DYN} · 코스피 {kp} · 코스닥 {kq}</div></div>')
@@ -443,7 +506,10 @@ rep(955, "+1,895%", f"{se49:+,.0f}%")
 setl(962, "⚠ 셈은 화면에서 한다", "  ⚠ 셈은 화면에서 한다. 종목마다 종가와 순매수를 통째로 실어 보내고 고른 두 날을 집어 계산한다.")
 setl(963, "종가는 반올림 없이", "  종가는 액면분할·병합·무상증자를 보정해 실었다(보정한 종가는 정수로 반올림). 순매수는 백만원 단위로 적어 쌍끌이 판정의 부호가 뒤집히지 않는다.</p>")
 setl(968, "당일 열은", (
-    f'  <p class="note">당일 등락은 KRX {d_iso(ASOF)} 기준이다. 랭킹과 나머지 열도 전종목 같은 기준(KRX {d_iso(ASOF)})으로 계산했다. '
+    (f'  <p class="note">{d_iso(ASOF)} 값은 장 마감 직후 한국투자증권 일자별 시세이고, 그 전날까지는 KRX 확정 자료이다. '
+     f'KRX 가 다음 영업일에 확정 자료를 올리면 그 값으로 바뀐다. 당일 등락과 나머지 열 모두 전종목 같은 방식으로 계산했다. '
+     if prov else
+     f'  <p class="note">당일 등락은 KRX {d_iso(ASOF)} 기준이다. 랭킹과 나머지 열도 전종목 같은 기준(KRX {d_iso(ASOF)})으로 계산했다. ') +
     f'기간을 바꾸면 종가·시가총액·최근 1주는 구간 끝일 값으로 바뀐다(시가총액은 최신 시총에 그날 종가 비율을 곱한 근사). '
     f'240일선·고점대비·거래량비·재무는 최신일 기준 그대로이다. 열 제목을 클릭하면 그 기준으로 정렬된다(다시 클릭하면 역순). '
     f'위 시장 버튼으로 코스피·코스닥을 따로 볼 수 있다.</p>'))
@@ -466,7 +532,7 @@ setl(1016, "강의의 재무 등급", (
     f'<b>2등급 = 그 밖의 흑자</b>. 강의는 \'분기로 보면 안 된다, 반드시 연간·3년 이상\'이라 했으므로 <b>등급은 사업보고서(연간) 기준</b>으로 매기고, '
     f'사업보고서가 없는 종목만 반기 값으로 매긴다. 등급에 마우스를 올리면 기준이 나온다. <b>★</b>는 최근 3년 내내 그 등급을 지킨 종목이다. '
     f'<b>부채비율</b> = 부채총계 ÷ 자본총계. <b>100% 이상이면 특등급·1등급을 인정하지 않고 2등급으로 내리며</b>, '
-    f'<b>200% 이상·적자·자본잠식·매출 2년 연속 감소는 실적 탈락</b>으로 내린다. 금융·보험 업종은 부채비율과 매출 감소를 보지 않는다.</dd>'))
+    f'<b>200% 이상·적자·자본잠식·매출 2년 연속 감소는 실적 탈락</b>으로 내린다. 금융·보험 업종은 부채비율 컷·강등과 매출 감소 컷에서 뺀다(부채비율 값은 그대로 보인다).</dd>'))
 setl(1018, "이 표는 2차 스크리닝", (
     '  <p class="note" style="margin-top:4px">이 표는 2차 스크리닝(실적 컷)까지이다. 강의의 완성형은 여기서 주도업종 + '
     '3MC(가격·재무·수급 크로스)로 2차 스크리닝을 해 20~30개 숏리스트를 만들고, 그다음 비중을 정하는 타게팅으로 넘어간다. '
@@ -512,7 +578,8 @@ L[1140] = "  <tbody>" + "".join(row(s, 0) for s in lose_pool) + "</tbody></table
 must(1158, "ct-now")
 L[1157] = '  <div class="chart"><canvas id="ac"></canvas></div>'
 rep(1161, "시총 2조 이상", M_DYN)
-rep(1161, "코스피를 이긴", "코스피(시총가중 직접 계산)를 이긴")
+if not REAL_IDX:
+    rep(1161, "코스피를 이긴", "코스피(시총가중 직접 계산)를 이긴")
 setl(1164, "42.6%", f'      <div class="v" id="b-now" style="color:#2563eb">{b_now:.1f}%</div>')
 setl(1165, "10/28 기준", f'      <div class="s" id="b-now-s">{RD[-1][4:6].lstrip("0")}/{RD[-1][6:].lstrip("0")} 기준 · <b>{b_word}</b></div></div>')
 rep(1166, '<div class="v" style="font-size:1.5rem">49%</div>', f'<div class="v" id="b-med" style="font-size:1.5rem">{b_med:.0f}%</div>')
@@ -524,8 +591,11 @@ rep(1170, '<div class="v" style="font-size:1.5rem;color:#dc2626">31%</div>',
 must(1173, "ct-now")
 L[1172] = '  <div class="chart"><canvas id="wc"></canvas></div>'
 setl(1174, "평상 범위이다.", f'  <p class="note"><span id="b-note">지금은 {b_word} 범위이다.</span>')
-rep(1176, "볼 수 있다.</p>", "볼 수 있다. 코스피 지수 자료의 접근 권한이 없어, 코스피 상장 종목의 시가총액 가중 수익률(KRX 일별 자료로 직접 계산)을 "
-    "지수 대신 썼다. 실제 코스피 지수와는 조금 다를 수 있다.</p>")
+if REAL_IDX:
+    rep(1176, "볼 수 있다.</p>", "볼 수 있다. 기준이 되는 코스피 지수는 한국투자증권 국내업종 일자별 지수이다.</p>")
+else:
+    rep(1176, "볼 수 있다.</p>", "볼 수 있다. 코스피 지수 자료를 받지 못해, 코스피 상장 종목의 시가총액 가중 수익률(KRX 일별 자료로 직접 계산)을 "
+        "지수 대신 썼다. 실제 코스피 지수와는 조금 다를 수 있다.</p>")
 must(1177, "background:color-mix")
 must(1183, "</p></div>")
 for n in range(1177, 1183):
@@ -554,7 +624,7 @@ setl(1227, "<footer>", (
     "<footer><p>본 자료는 정보 제공·교육 목적이며 투자 권유가 아니다. 투자의 최종 판단과 책임은 투자자 본인에게 있다. · "
     "방법론: 이야기꾼 시나리오투자법(3MC 오디션 피라미딩) · "
     f"데이터: KRX Open API 코스피·코스닥 전종목 일별매매정보(이력, {d_iso(RD[0])}~{d_iso(ASOF)}) · "
-    "한국투자증권 Open API(업종 · PBR · 투자자별 매매동향) · DART Open API(최신 반기 주요계정 · 사업보고서 3년치). 기준일이 휴장이면 직전 거래일로 자동 보정된다. "
+    "한국투자증권 Open API(업종 · PBR · 투자자별 매매동향 · 장 마감 직후 시세 · 코스피 지수) · DART Open API(최신 반기 주요계정 · 사업보고서 3년치). 기준일이 휴장이면 직전 거래일로 자동 보정된다. "
     "이 페이지는 「찰리의 시투 추종」의 오디션 피라미딩 페이지를 제작자의 허락을 받아 복제하고, 시총 기준을 "
     f"{FLOOR_TXT} 이상으로 바꿔 데이터를 새로 수집해 만든 것이다.</p></footer>"))
 # JS 데이터

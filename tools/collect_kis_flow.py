@@ -19,6 +19,7 @@ from pathlib import Path
 BASE = "https://openapi.koreainvestment.com:9443"
 WORKERS = 8
 MIN_GAP = 0.07            # 호출 사이 최소 간격(초) — 초당 약 14회
+KST = dt.timezone(dt.timedelta(hours=9))
 
 _gate = threading.Lock()
 _last = [0.0]
@@ -108,8 +109,8 @@ def fetch_stock(env, tok, out, code, latest, start):
     f = out / (code + ".json")
     have = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
     newest = max(have) if have else None
-    if newest and newest >= latest:
-        return True
+    # 이미 받은 종목도 첫 페이지(최근 30거래일)는 늘 다시 받아 덮어쓴다. 어제 저녁에 받은 «당일» 값이
+    # 잠정치였더라도 다음 실행에서 확정치로 바뀌게 하기 위해서다.
     day = latest
     while True:
         got = page(env, tok, code, day)
@@ -136,8 +137,8 @@ def main():
     env = load_env(env_path)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    days = sorted(p for p in Path(krx_dir).glob("*.json") if p.stat().st_size > 5)
-    latest = days[-1].stem
+    days = sorted(p for p in Path(krx_dir).glob("*.json") if p.stat().st_size > 5 and p.stem >= "20250401")
+    latest = dt.datetime.now(KST).strftime("%Y%m%d")     # 오늘까지 — KRX 보다 하루 앞선 당일치를 받는다
     rows = json.loads(days[-1].read_text(encoding="utf-8"))
     codes = [r["ISU_CD"] for r in rows if int(r["MKTCAP"] or 0) >= int(floor)]
     tok = token(env, out.parent / "kis")

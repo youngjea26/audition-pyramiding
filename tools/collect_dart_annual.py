@@ -87,6 +87,8 @@ def main():
             nm = "매출액" if nm == "수익(매출액)" else nm
             if nm.startswith("당기순이익"):
                 nm = "당기순이익"      # 보고서에는 「당기순이익(손실)」로 온다
+            if nm.startswith("영업이익"):
+                nm = "영업이익"        # 「영업이익(손실)」로 오는 회사도 있다
             if nm not in ("매출액", "영업이익", "당기순이익", "자본총계"):
                 continue
             sc = inv[it["corp_code"]]
