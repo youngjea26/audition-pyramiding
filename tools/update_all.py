@@ -11,6 +11,7 @@ import datetime as dt
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(sys.argv[1]).resolve()
@@ -75,6 +76,34 @@ def reconcile_krx():
         print("경고: 다시 받아도 KRX 가 비어 있는 거래일", still, flush=True)
 
 
+def universe_codes(floor):
+    days = sorted(p for p in KRX.glob("*.json") if p.stat().st_size > 5)
+    rows = json.loads(days[-1].read_text(encoding="utf-8"))
+    return {r["ISU_CD"] for r in rows if int(r["MKTCAP"] or 0) >= int(floor)}
+
+
+def dart_due():
+    """재무(반기·분기·사업보고서)는 분기·연 단위로만 바뀌므로 매일 받지 않는다(DART 는 밤에 느려 수십 배 걸리기도 한다).
+
+    처음이거나, 유니버스에 재무가 없는 새 종목이 들어왔거나, 마지막으로 받은 지 7일이 지났을 때만 다시 받는다.
+    이유를 돌려주고, 받을 필요가 없으면 None 을 돌려준다.
+    """
+    fin, ann = Path(DART) / "fin.json", Path(DART) / "annual.json"
+    if not fin.exists() or not ann.exists():
+        return "처음 받는다"
+    age = (time.time() - min(fin.stat().st_mtime, ann.stat().st_mtime)) / 86400
+    if age >= 7:
+        return "마지막으로 받은 지 %.0f일" % age
+    j = json.loads(fin.read_text(encoding="utf-8"))
+    no_fin = set(j.get("no_fin", []))
+    uni = universe_codes(BUFFER)
+    have = set(j.get("fin", {})) | no_fin | {c for c in uni if (c[:-1] + "0") in no_fin}
+    missing = uni - have
+    if missing:
+        return "재무가 없는 새 종목 %d개" % len(missing)
+    return None
+
+
 for sub in ("krx", "hist", "dart", "kis", "kis_daily", "kis_index", "kis_flow"):
     (ROOT / "cache" / sub).mkdir(parents=True, exist_ok=True)
 
@@ -83,8 +112,13 @@ run("collect_krx.py", ENV, KRX, START, today.strftime("%Y%m%d"))
 run("collect_krx.py", ENV, KRX, f"{annual_year - 1}1220", f"{annual_year - 1}1231")   # 재무 크로스용 전전년 연말 시총
 reconcile_krx()
 run("collect_krx_history.py", ENV, KRX, HIST, KIS_INDEX / "kospi.json", HIST_START, HIST_END, "200000000000")
-run("collect_dart.py", ENV, KRX, DART, BUFFER, report_year)
-run("collect_dart_annual.py", ENV, KRX, DART, BUFFER, annual_year)
+why = dart_due()
+if why:
+    print("재무 갱신:", why, flush=True)
+    run("collect_dart.py", ENV, KRX, DART, BUFFER, report_year)
+    run("collect_dart_annual.py", ENV, KRX, DART, BUFFER, annual_year)
+else:
+    print("재무 갱신 건너뜀 (7일 이내에 받았고 새 종목도 없다)", flush=True)
 run("collect_kis.py", ENV, KRX, KIS, BUFFER, "all", "refresh")
 run("collect_kis_daily.py", ENV, KRX, KIS_DAILY, BUFFER)
 run("collect_kis_flow.py", ENV, KRX, FLOW, BUFFER, START)

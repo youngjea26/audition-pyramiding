@@ -1,16 +1,33 @@
 """한국투자증권 현재가 시세로 종목별 업종(bstp_kor_isnm)과 PBR·PER 을 받는다.
 
-사용: python -I collect_kis.py <env 경로> <KRX 캐시 폴더> <출력 폴더> <시총 하한(원)> [종목 수 제한]
+종목들을 여러 스레드로 동시에 받되, 전체 호출 간격은 하나의 자물쇠로 묶어 초당 한도(약 20회)를 넘지 않게 한다.
+
+사용: python -I collect_kis.py <env 경로> <KRX 캐시 폴더> <출력 폴더> <시총 하한(원)> [종목 수 제한] [refresh]
 """
 import json
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 BASE = "https://openapi.koreainvestment.com:9443"
+WORKERS = 8
+MIN_GAP = 0.07            # 호출 사이 최소 간격(초) — 초당 약 14회
+
+_gate = threading.Lock()
+_last = [0.0]
+
+
+def throttle():
+    with _gate:
+        wait = _last[0] + MIN_GAP - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        _last[0] = time.time()
 
 
 def load_env(path):
@@ -44,7 +61,7 @@ def token(env, out):
             res = json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         sys.exit("토큰 발급 실패 HTTP %s %s" % (e.code, e.read().decode("utf-8", "replace")[:200]))
-    f.write_text(json.dumps({"token": res["access_token"], "expires": time.time() + 80000}),
+    f.write_text(json.dumps({"token": res["access_token"], "expires": time.time() + 70000}),
                  encoding="utf-8")
     return res["access_token"]
 
@@ -55,17 +72,22 @@ def price(env, tok, code):
         BASE + "/uapi/domestic-stock/v1/quotations/inquire-price?" + q,
         headers={"authorization": "Bearer " + tok, "appkey": env["KIS_APP_KEY"],
                  "appsecret": env["KIS_APP_SECRET"], "tr_id": "FHKST01010100", "custtype": "P"})
-    for attempt in range(4):
+    err = ""
+    for attempt in range(5):
+        throttle()
         try:
             with urllib.request.urlopen(req, timeout=30) as r:
                 return json.loads(r.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
-            if e.code == 500 or e.code == 429:
+            err = "HTTP %s %s" % (e.code, e.read().decode("utf-8", "replace")[:100])
+            if e.code in (500, 429):
                 time.sleep(1.5 * (attempt + 1))
                 continue
-            sys.exit("HTTP %s %s" % (e.code, e.read().decode("utf-8", "replace")[:200]))
-        except Exception:
+            break
+        except Exception as e:
+            err = "%s: %s" % (type(e).__name__, e)
             time.sleep(1.5 * (attempt + 1))
+    print("  호출 실패 %s — %s" % (code, err), flush=True)
     return None
 
 
@@ -84,22 +106,30 @@ def main():
     tok = token(env, out)
     f = out / "kis.json"
     res = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
-    for n, code in enumerate(codes, 1):
-        if not refresh and code in res and res[code].get("sector") is not None:
-            continue
+    todo = [c for c in codes if refresh or c not in res or res[c].get("sector") is None]
+
+    def one(code):
         j = price(env, tok, code)
         o = (j or {}).get("output") or {}
         if j and j.get("rt_cd") == "0":
-            res[code] = {"sector": o.get("bstp_kor_isnm", "").strip(),
-                         "pbr": o.get("pbr", "").strip(), "per": o.get("per", "").strip()}
-        else:
-            print("실패", code, (j or {}).get("msg1"), flush=True)
-        time.sleep(0.12)
-        if n % 50 == 0:
-            f.write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
-            print("진행 %d/%d" % (n, len(codes)), flush=True)
+            return code, {"sector": o.get("bstp_kor_isnm", "").strip(),
+                          "pbr": o.get("pbr", "").strip(), "per": o.get("per", "").strip()}
+        if j:
+            print("  실패", code, j.get("msg1"), flush=True)
+        return code, None
+
+    t0 = time.time()
+    bad = 0
+    with ThreadPoolExecutor(max_workers=WORKERS) as ex:
+        for n, (code, val) in enumerate(ex.map(one, todo), 1):
+            if val is None:
+                bad += 1
+            else:
+                res[code] = val          # 결과는 주 스레드에서만 모은다
+            if n % 100 == 0:
+                print("진행 %d/%d (%.0f초)" % (n, len(todo), time.time() - t0), flush=True)
     f.write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
-    print("저장 %d종목" % len(res), flush=True)
+    print("저장 %d종목 (이번에 %d종목 받음, 실패 %d, %.0f초)" % (len(res), len(todo) - bad, bad, time.time() - t0), flush=True)
 
 
 main()
