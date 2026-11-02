@@ -217,9 +217,6 @@ for c in codes:
     if len(vv) >= 50 and sum(vv[-50:]):
         vr = (sum(vv[-5:]) / 5) / (sum(vv[-50:]) / 50)
     w1 = (last / a[LI - 5] - 1) * 100 if a[LI - 5] else None
-    m5 = ""                  # 5주선(25거래일 이동평균) 우하향이면 1: 오늘 값이 1주 전 값보다 낮다
-    if len(valid) >= 30:
-        m5 = "1" if sum(valid[-25:]) < sum(valid[-30:-5]) else "0"
     g0, g1 = a[GI], last
     ret = (g1 / g0 - 1) * 100 if g0 and g1 else None
     sector = (kis.get(c, {}).get("sector") or "").strip()
@@ -287,10 +284,10 @@ for c in codes:
         sector=sector, px=int(r["TDD_CLSPRC"]), cap=int(r["MKTCAP"]), fluc=float(r["FLUC_RT"] or 0),
         ret=ret, w1=w1, above=above, hi=hi, vr=vr, opm=opm, roe=roe, debt=debt, pbr=pbr,
         fin=f, is_fin=is_fin, reasons=reasons, grade=grade, persist=persist, gnote=gnote, loss=loss_flag,
-        vc=vc, vct=vct, vcw=vcw, adj=a, ext=S[c]["ext"], m5=m5))
+        vc=vc, vct=vct, vcw=vcw, adj=a, ext=S[c]["ext"]))
 
 mom_top = [s["name"] for s in sorted([s for s in stocks if not s["reasons"] and s["ret"] and s["ret"] > 0
-                                  and s["vr"] != "" and s["vr"] > 1 and s["m5"] == "0" and s["above"] == "1"
+                                  and s["vr"] != "" and s["vr"] > 1 and s["above"] == "1"
                                   and s["w1"] is not None and s["w1"] >= 0], key=lambda s: -s["ret"])][:30]
 by_ret = sorted([s for s in stocks if s["ret"] is not None], key=lambda s: -s["ret"])
 base = [s for s in stocks if s["ret"] is not None]
@@ -343,7 +340,7 @@ def row(s, rank, why=None):
              f'data-hi="{round(s["hi"], 4)}" data-vr="{"" if s["vr"] == "" else round(s["vr"], 4)}" '
              f'data-grade="{gname}" data-persist="{"1" if s["persist"] else ""}" '
              f'data-opm="{"" if s["opm"] is None else s["opm"]}" '
-             f'data-debt="{"" if s["debt"] is None else s["debt"]}" data-p="{p}" data-vc="{s["vc"]}" data-m5="{s["m5"]}"'
+             f'data-debt="{"" if s["debt"] is None else s["debt"]}" data-p="{p}" data-vc="{s["vc"]}"'
              + (f' data-vct="{esc(s["vct"])}" data-vcw="{esc(s["vcw"])}"' if s["vct"] else ""))
     mk = "mk1" if s["mkt"] == "코스피" else "mk2"
     fl = s["fluc"]
@@ -537,9 +534,9 @@ setl(799, '<div class="verdict">',
      f'{LI - GI + 1}거래일을 추적했습니다. 기준일 대비 플러스가 <b>{len(survivors)}종목({rate:.0f}%)</b>입니다 — {phrase}</div>')
 rep(800, "시총 2조 이상", M)
 L[801] = ('  <div class="wins" id="momfl" style="margin-top:10px"><span class="wins-l">모멘텀 필터</span>'
-          '<button id="mom-btn" title="켜면 거래량비 1 이하, 5주선 우하향, 240일선 아래, 최근 1주 마이너스인 종목을 빼고 상승률 상위를 보여준다">'
-          '거래량비 &gt; 1 · 5주선 우상향 · 240일선 위 · 최근 1주 ≥ 0</button>'
-          '<span class="filt-note">5주선 = 25거래일 이동평균(1주 전보다 낮으면 우하향) · 순위는 기준일 대비 상승률</span></div>\n'
+          '<button id="mom-btn" title="켜면 거래량비 1 이하, 240일선 아래, 최근 1주 마이너스인 종목을 빼고 상승률 상위를 보여준다">'
+          '거래량비 &gt; 1 · 240일선 위 · 최근 1주 ≥ 0</button>'
+          '<span class="filt-note">순위는 기준일 대비 상승률 · 최근 1주는 고른 구간 끝 기준</span></div>\n'
           f'  <div class="filt" data-topn="30"><button class="on" data-mkt="전체">전체 <span>{len(live_all)}</span></button>'
           f'<button data-mkt="코스피">코스피 <span>{n_kp}</span></button>'
           f'<button data-mkt="코스닥">코스닥 <span>{n_kq}</span></button>'
@@ -710,12 +707,11 @@ CAP_JS = r"""
   function CAPTXT(){ return CAPOPT[capKey()]||'5000억'; }
   function capOK(r){ return parseFloat(r.getAttribute('data-cap')||'0')>=CAPMIN; }
   var MOM=/[#&]mom=1/.test(location.hash||'');
-  function momOK(r){          // 거래량비 > 1 · 5주선 우하향 아님 · 240일선 위 · 최근 1주 마이너스 아님
+  function momOK(r){          // 거래량비 > 1 · 240일선 위 · 최근 1주 마이너스 아님
     if(!MOM)return true;
     var wc=r.querySelector('.w1-cell'), w=wc?parseFloat(wc.getAttribute('data-v')):NaN;
     if(isNaN(w)||w===-9999)w=parseFloat(r.getAttribute('data-w1'));
-    return parseFloat(r.getAttribute('data-vr'))>1 && r.getAttribute('data-m5')==='0'
-        && r.getAttribute('data-above')==='1' && w>=0;
+    return parseFloat(r.getAttribute('data-vr'))>1 && r.getAttribute('data-above')==='1' && w>=0;
   }
   function rowOK(r){ return capOK(r)&&momOK(r); }
   function setHash(){ try{ history.replaceState(null,'','#cap='+capKey()+(MOM?'&mom=1':'')); }catch(e){} }
