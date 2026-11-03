@@ -6,6 +6,7 @@
 """
 import html
 import json
+import datetime as dt
 import os
 import shutil
 import statistics
@@ -515,9 +516,10 @@ L[792] = (
     '<span class="filt-note">이상 · 최신 시가총액 기준 · 표·업종·3MC·요약 숫자·차트가 모두 따라 바뀝니다</span></div>\n'
     '<div class="stats">')
 prov = ASOF in PROVISIONAL
+BUILT = dt.datetime.now(dt.timezone(dt.timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
 src_note = (f' · <b>{d_iso(ASOF)} 값은 장 마감 직후 한국투자증권 자료(KRX 확정 자료는 다음 영업일 반영)</b>' if prov else "")
 setl(792, "기준일 2026-10-28",
-     f'<p class="pauth">기준일 {d_iso(ASOF)} · KRX Open API · DART · 한국투자증권 · 직접 수집{src_note}</p></header>')
+     f'<p class="pauth">기준일 {d_iso(ASOF)} · KRX Open API · DART · 한국투자증권 · 직접 수집 · <b>갱신 {BUILT} KST</b>{src_note}</p></header>')
 setl(794, "오디션 대상",
      f'  <div class="stat" id="st-univ"><div class="l">오디션 대상</div><div class="v">{len(univ0)}</div>'
      f'<div class="s">{M_DYN} · 코스피 {kp} · 코스닥 {kq}</div></div>')

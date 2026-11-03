@@ -9,6 +9,7 @@
 """
 import datetime as dt
 import json
+import os
 import subprocess
 import sys
 import time
@@ -91,6 +92,8 @@ def dart_due():
     fin, ann = Path(DART) / "fin.json", Path(DART) / "annual.json"
     if not fin.exists() or not ann.exists():
         return "처음 받는다"
+    if os.environ.get("DART_MODE", "auto") == "skip":      # 저녁 실행: 재무는 아침 실행이 갱신한다
+        return None
     age = (time.time() - min(fin.stat().st_mtime, ann.stat().st_mtime)) / 86400
     if age >= 7:
         return "마지막으로 받은 지 %.0f일" % age
