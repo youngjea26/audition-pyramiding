@@ -13,7 +13,7 @@ from pathlib import Path
 
 KST = dt.timezone(dt.timedelta(hours=9))
 ENDPOINTS = (("KOSPI", "stk_bydd_trd"), ("KOSDAQ", "ksq_bydd_trd"))
-KEEP = ("ISU_CD", "ISU_NM", "MKT_NM", "SECT_TP_NM", "TDD_CLSPRC", "FLUC_RT",
+KEEP = ("ISU_CD", "ISU_NM", "MKT_NM", "SECT_TP_NM", "TDD_CLSPRC", "TDD_OPNPRC", "TDD_HGPRC", "TDD_LWPRC", "FLUC_RT",
         "ACC_TRDVOL", "ACC_TRDVAL", "MKTCAP", "LIST_SHRS")
 
 
@@ -53,6 +53,18 @@ def fetch(key, endpoint, day):
     sys.exit("재시도 초과: %s %s — 마지막 오류: %s" % (endpoint, day, err))
 
 
+def needs_ohlc(f, day):
+    """예전에 받은 캐시는 시가·고가·저가를 버렸다. 52주 신고가용으로 최근 약 320거래일은 다시 받는다.
+
+    받은 내용이 있는 파일(빈 휴장 파일은 제외)의 앞부분에 고가 필드가 없으면 다시 받아야 하는 파일이다.
+    """
+    cutoff = (dt.datetime.now(KST).date() - dt.timedelta(days=470)).strftime("%Y%m%d")
+    if day < cutoff or f.stat().st_size <= 5:
+        return False
+    with open(f, encoding="utf-8") as fh:
+        return "TDD_HGPRC" not in fh.read(900)
+
+
 def main():
     env_path, cache_dir, start, end = sys.argv[1:5]
     key = load_env(env_path)["KRX_API_KEY"]
@@ -67,7 +79,7 @@ def main():
         if dt.datetime.strptime(day, "%Y%m%d").weekday() >= 5:
             continue
         f = out / (day + ".json")
-        if f.exists():
+        if f.exists() and not needs_ohlc(f, day):
             skipped += 1
             continue
         rows = []

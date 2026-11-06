@@ -130,7 +130,8 @@ def main():
             day = r.get("stck_bsop_date", "")
             c, v, f = num(r.get("stck_clpr"), int), num(r.get("acml_vol"), int), num(r.get("prdy_ctrt"), float)
             if day > base and c and (day != today or closed):
-                d[day] = [c, v or 0, f if f is not None else 0.0]
+                o, h, lo = (num(r.get(k), int) or c for k in ("stck_oprc", "stck_hgpr", "stck_lwpr"))
+                d[day] = [c, v or 0, f if f is not None else 0.0, o, h, lo]      # 종가·거래량·등락률·시가·고가·저가
         return d
 
     ref = daily(env, tok, "005930")

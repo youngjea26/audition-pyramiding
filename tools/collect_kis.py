@@ -112,8 +112,13 @@ def main():
         j = price(env, tok, code)
         o = (j or {}).get("output") or {}
         if j and j.get("rt_cd") == "0":
-            return code, {"sector": o.get("bstp_kor_isnm", "").strip(),
-                          "pbr": o.get("pbr", "").strip(), "per": o.get("per", "").strip()}
+            rec = {"sector": o.get("bstp_kor_isnm", "").strip(),
+                   "pbr": o.get("pbr", "").strip(), "per": o.get("per", "").strip()}
+            # 52주 신고가 매매용: 종목 상태 플래그(관리·경고·정지·단기과열·정리매매)와 KIS 가 계산한 52주 고가(대조 검증용)
+            for k in ("iscd_stat_cls_code", "temp_stop_yn", "mrkt_warn_cls_code", "invt_caful_yn", "short_over_yn",
+                      "mang_issu_cls_code", "sltr_yn", "w52_hgpr", "w52_hgpr_date"):
+                rec[k] = (o.get(k) or "").strip()
+            return code, rec
         if j:
             print("  실패", code, j.get("msg1"), flush=True)
         return code, None

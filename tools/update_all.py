@@ -52,6 +52,28 @@ def nonempty(day):
     return p.exists() and p.stat().st_size > 5
 
 
+def backfill_ohlc_parallel(workers=4):
+    """예전 캐시는 시가·고가·저가가 없다(52주 신고가용으로 최근 약 320거래일은 필요). 순서대로 받으면 30분 넘게 걸려서
+    날짜 구간을 나눠 동시에 받는다. 필요한 날이 없으면(대부분의 실행) 바로 지나간다."""
+    cutoff = max(START, (today - dt.timedelta(days=470)).strftime("%Y%m%d"))
+    need = []
+    for p in sorted(KRX.glob("*.json")):
+        if p.stem >= cutoff and p.stat().st_size > 5:
+            with open(p, encoding="utf-8") as fh:
+                if "TDD_HGPRC" not in fh.read(900):
+                    need.append(p.stem)
+    if not need:
+        return
+    k = max(1, min(workers, len(need)))
+    size = -(-len(need) // k)
+    chunks = [need[i:i + size] for i in range(0, len(need), size)]
+    print("▶ 시가·고가·저가 백필 %d일 — %d개로 나눠 병렬 수집" % (len(need), len(chunks)), flush=True)
+    procs = [subprocess.Popen([sys.executable, str(TOOLS / "collect_krx.py"), ENV, str(KRX), c[0], c[-1]]) for c in chunks]
+    codes = [pr.wait() for pr in procs]
+    if any(codes):
+        sys.exit("시가·고가·저가 백필 실패 (종료 코드 %s)" % codes)
+
+
 def reconcile_krx():
     """KRX 가 빈 응답을 줬던 날을 코스피 지수 일별 자료(거래일 달력)와 맞춰 본다.
 
@@ -111,6 +133,7 @@ for sub in ("krx", "hist", "dart", "kis", "kis_daily", "kis_index", "kis_flow"):
     (ROOT / "cache" / sub).mkdir(parents=True, exist_ok=True)
 
 run("collect_kis_index.py", ENV, KIS_INDEX, HIST_START)
+backfill_ohlc_parallel()
 run("collect_krx.py", ENV, KRX, START, today.strftime("%Y%m%d"))
 run("collect_krx.py", ENV, KRX, f"{annual_year - 1}1220", f"{annual_year - 1}1231")   # 재무 크로스용 전전년 연말 시총
 reconcile_krx()
@@ -126,4 +149,9 @@ run("collect_kis.py", ENV, KRX, KIS, BUFFER, "all", "refresh")
 run("collect_kis_daily.py", ENV, KRX, KIS_DAILY, BUFFER)
 run("collect_kis_flow.py", ENV, KRX, FLOW, BUFFER, START)
 run("build_audition.py", ROOT, FLOOR)
+# 52주 신고가 배치: 실패해도 위에서 만든 기존 페이지 배포는 막지 않는다
+print("▶ w52/baseline.py", flush=True)
+r = subprocess.run([sys.executable, str(TOOLS / "w52" / "baseline.py"), str(ROOT)])
+if r.returncode != 0:
+    print("경고: 52주 신고가 배치가 실패했다(종료 코드 %s) — 기존 페이지에는 영향이 없다" % r.returncode, flush=True)
 print("완료", flush=True)

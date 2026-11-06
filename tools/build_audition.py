@@ -53,11 +53,14 @@ def add_provisional_days():
         files += 1
         b = base[p.stem]
         shares = int(b["LIST_SHRS"] or 0)
-        for d, (c, v, f) in json.loads(p.read_text(encoding="utf-8")).items():
+        for d, vals in json.loads(p.read_text(encoding="utf-8")).items():
             if d > LAST_KRX:
+                c, v, f = vals[:3]
+                o, h, lo = (vals[3:6] + [c, c, c])[:3]
                 per_day.setdefault(d, {})[p.stem] = {
                     "ISU_CD": p.stem, "ISU_NM": b["ISU_NM"], "MKT": b["MKT"], "MKT_NM": b.get("MKT_NM", b["MKT"]),
-                    "SECT_TP_NM": b.get("SECT_TP_NM", ""), "TDD_CLSPRC": str(c), "FLUC_RT": str(f),
+                    "SECT_TP_NM": b.get("SECT_TP_NM", ""), "TDD_CLSPRC": str(c), "TDD_OPNPRC": str(o),
+                    "TDD_HGPRC": str(h), "TDD_LWPRC": str(lo), "FLUC_RT": str(f),
                     "ACC_TRDVOL": str(v), "ACC_TRDVAL": "0", "MKTCAP": str(c * shares), "LIST_SHRS": str(shares)}
     used = []
     for d in sorted(per_day):

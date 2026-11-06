@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>52주 신고가 매매</title>
+<style>
+:root{--bg:#fff;--s:#f6f7f9;--b:rgba(15,23,42,.12);--t:#0f172a;--t2:#475569;--ac:#2563eb;--up:#d21f3c;--dn:#1161c4;--ok:#059669}
+@media(prefers-color-scheme:dark){:root{--bg:#0a0a0a;--s:#141414;--b:rgba(255,255,255,.1);--t:#ededed;--t2:#8a8a8a;--up:#ff6b7a;--dn:#6ea8ff}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--t);font:14px/1.5 -apple-system,"Segoe UI","Malgun Gothic",sans-serif}
+.wrap{max-width:1280px;margin:0 auto;padding:18px 16px 60px}h1{font-size:1.35rem;margin:0 0 4px}
+.sub{color:var(--t2);font-size:.82rem}.badge{display:inline-block;padding:1px 8px;border-radius:99px;font-size:.75rem;font-weight:700;margin-left:6px}
+.b-live{background:#05966922;color:var(--ok)}.b-closed{background:#2563eb22;color:var(--ac)}.b-idle{background:#64748b22;color:var(--t2)}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 10px}.tabs button{border:1px solid var(--b);background:var(--s);color:var(--t2);
+padding:5px 11px;border-radius:99px;cursor:pointer;font-size:.82rem}.tabs button.on{background:var(--ac);border-color:var(--ac);color:#fff}
+.tabs b{margin-left:4px}.grid{display:grid;grid-template-columns:1fr 330px;gap:14px}@media(max-width:980px){.grid{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse;font-size:.84rem}th,td{padding:6px 7px;border-bottom:1px solid var(--b);text-align:right;white-space:nowrap}
+th{position:sticky;top:0;background:var(--bg);color:var(--t2);font-weight:600}td.l,th.l{text-align:left}tr.sel td{background:var(--s)}
+tbody tr{cursor:pointer}.up{color:var(--up)}.dn{color:var(--dn)}.st{font-weight:700;font-size:.74rem;padding:1px 6px;border-radius:4px;background:var(--s)}
+.panel{border:1px solid var(--b);border-radius:12px;padding:14px;background:var(--s);position:sticky;top:10px;align-self:start}
+.panel h3{margin:0 0 8px;font-size:1rem}.panel label{display:flex;justify-content:space-between;align-items:center;margin:4px 0;font-size:.84rem}
+.panel input{width:120px;padding:3px 6px;border:1px solid var(--b);border-radius:6px;background:var(--bg);color:var(--t);text-align:right}
+.kv{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px dashed var(--b);font-size:.84rem}.note{color:var(--t2);font-size:.76rem;margin-top:8px}
+.empty{padding:30px;text-align:center;color:var(--t2)}
+</style></head><body><div class="wrap">
+<h1>52주 신고가 매매 <span id="mode" class="badge b-idle">대기</span></h1>
+<div class="sub" id="meta">불러오는 중…</div>
+<div class="sub">후보 검토 우선순위용입니다. 점수는 매수 신호가 아니며 <b>주문 기능은 없습니다.</b></div>
+<div class="tabs" id="tabs"></div>
+<div class="grid"><div style="overflow:auto"><table><thead><tr>
+<th class="l">종목</th><th class="l">업종</th><th class="l">상태</th><th>현재가</th><th>52주 고가</th><th>이격률</th>
+<th>Live</th><th>정적</th><th>상대거래량</th><th>RS1M/3M</th><th class="l">실적</th></tr></thead><tbody id="rows"></tbody></table>
+<div id="empty" class="empty" style="display:none">이 탭에 해당하는 종목이 없습니다.</div></div>
+<div class="panel" id="risk"><h3>리스크 패널 <span class="sub">계산기 · 주문 없음</span></h3>
+<label>계좌(원)<input id="acct" value="200000000"></label><label>거래당 리스크(%)<input id="rpct" value="1"></label>
+<label>기본 손절(%)<input id="spct" value="8"></label><div id="plan" class="note">표에서 종목을 고르세요.</div></div></div>
+<script>
+var TABS=[["near","신고가 접근",["WATCH","NEAR","READY"]],["ready","READY",["READY"]],["today","오늘 돌파",["INTRADAY_BREAKOUT"]],
+["conf","종가 확정",["CONFIRMED_BREAKOUT"]],["failed","FAILED",["FAILED_BREAKOUT"]],["ext","EXTENDED",["EXTENDED"]],
+["wait","재돌파 대기",["REBREAKOUT_WAIT"]],["re","재돌파 발생",["REBREAKOUT"]]];
+var DATA={rows:[],mode:"idle",day:""},tab="near",sel=(location.hash.match(/sym=(\w+)/)||[])[1]||"";
+var $=function(i){return document.getElementById(i)},fm=function(n,d){return n==null?"-":Number(n).toLocaleString("ko-KR",{maximumFractionDigits:d||0})};
+function tabRows(k){var s=TABS.filter(function(t){return t[0]===k})[0][2];return DATA.rows.filter(function(r){return s.indexOf(r.state)>=0})}
+function score(r){return r.live?r.live.live_score:r.static_score||0}
+function render(){
+ $("mode").textContent={live:"장중 실시간",closed:"종가 확정",idle:"대기"}[DATA.mode]||DATA.mode;$("mode").className="badge b-"+DATA.mode;
+ $("meta").textContent="거래일 "+(DATA.day||"-")+" · 추적 "+DATA.rows.length+"종목(게이트 통과) · 갱신 "+new Date().toLocaleTimeString("ko-KR");
+ $("tabs").innerHTML=TABS.map(function(t){return '<button class="'+(t[0]===tab?"on":"")+'" data-t="'+t[0]+'">'+t[1]+'<b>'+tabRows(t[0]).length+'</b></button>'}).join("");
+ var rs=tabRows(tab).sort(function(a,b){return score(b)-score(a)||b.gap_pct-a.gap_pct});
+ $("empty").style.display=rs.length?"none":"block";
+ $("rows").innerHTML=rs.map(function(r){var l=r.live||{},g=r.gap_pct;
+  return '<tr data-s="'+r.symbol+'" class="'+(r.symbol===sel?"sel":"")+'"><td class="l"><b>'+r.name+'</b> <span class="sub">'+r.symbol+'</span></td><td class="l">'+(r.sector||"-")+
+  '</td><td class="l"><span class="st">'+r.state+'</span></td><td>'+fm(r.price)+'</td><td>'+fm(r.high_52w_prev)+'</td><td class="'+(g>=0?"up":"dn")+'">'+(g>0?"+":"")+fm(g,2)+'%</td><td><b>'+
+  (l.live_score!=null?fm(l.live_score,1):"-")+'</b></td><td>'+fm(r.static_score,1)+'</td><td>'+(l.rel_volume!=null?fm(l.rel_volume,2)+"배":"-")+'</td><td>'+fm(r.rs1m)+" / "+fm(r.rs3m)+
+  '</td><td class="l">'+(r.fund_status||"-")+(r.caution?" ⚠":"")+'</td></tr>'}).join("");
+ plan()}
+function plan(){var r=DATA.rows.filter(function(x){return x.symbol===sel})[0],box=$("plan");if(!r){box.textContent="표에서 종목을 고르세요.";return}
+ var A=+$("acct").value||0,R=(+$("rpct").value||0)/100,S=(+$("spct").value||0)/100,e=r.price||r.high_52w_prev;if(!e||!S){box.textContent="가격·손절 값을 확인하세요.";return}
+ var risk=A*R,stop=e*(1-S),rr=e-stop,pos=risk/S,sh=Math.floor(pos/e),per=Math.floor(sh/3),last=sh-per*2,kv=function(k,v){return '<div class="kv"><span>'+k+'</span><b>'+v+'</b></div>'};
+ box.innerHTML='<b>'+r.name+'</b> 기준가 '+fm(e)+'원'+kv("거래당 리스크",fm(risk)+"원")+kv("손절가 (-"+fm(S*100,1)+"%)",fm(stop)+"원")+kv("1R (주당)",fm(rr)+"원")+
+  kv("최대 기본 포지션",fm(pos)+"원")+kv("총 수량",fm(sh)+"주")+kv("1/3 분할 수량",fm(per)+" / "+fm(per)+" / "+fm(last)+"주")+kv("+1R 본절권 관리",fm(e+rr)+"원")+
+  kv("+3R 50% 익절",fm(e+3*rr)+"원 ("+fm(Math.floor(sh/2))+"주)")+'<div class="note">잔량: 주봉 종가가 5주선('+fm(r.ma5w)+') 아래로 이탈하면 정리. 가격·수량 수준만 보여 주며 주문은 하지 않습니다.</div>'}
+document.addEventListener("click",function(ev){var t=ev.target.closest("[data-t]"),s=ev.target.closest("[data-s]");
+ if(t){tab=t.getAttribute("data-t");render()}else if(s){sel=s.getAttribute("data-s");history.replaceState(null,"","#sym="+sel);render()}});
+["acct","rpct","spct"].forEach(function(i){$(i).addEventListener("input",plan)});
+function apply(d){DATA=d;render()}
+function poll(){fetch("/api/rows").then(function(r){return r.json()}).then(apply).catch(function(){})}
+poll();if(window.EventSource){var es=new EventSource("/api/stream");es.addEventListener("rows",function(e){apply(JSON.parse(e.data))});es.onerror=function(){setTimeout(poll,3000)}}else{setInterval(poll,5000)}
+</script></div></body></html>
