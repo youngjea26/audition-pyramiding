@@ -154,4 +154,9 @@ print("▶ w52/baseline.py", flush=True)
 r = subprocess.run([sys.executable, str(TOOLS / "w52" / "baseline.py"), str(ROOT)])
 if r.returncode != 0:
     print("경고: 52주 신고가 배치가 실패했다(종료 코드 %s) — 기존 페이지에는 영향이 없다" % r.returncode, flush=True)
+else:
+    print("▶ build_52w.py", flush=True)
+    r = subprocess.run([sys.executable, str(TOOLS / "build_52w.py"), str(ROOT)])
+    if r.returncode != 0:
+        print("경고: 52주 정적 페이지 생성이 실패했다(종료 코드 %s) — 기존 페이지에는 영향이 없다" % r.returncode, flush=True)
 print("완료", flush=True)

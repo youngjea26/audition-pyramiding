@@ -7,7 +7,7 @@
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--t);font:14px/1.5 -apple-system,"Segoe UI","Malgun Gothic",sans-serif}
 .wrap{max-width:1280px;margin:0 auto;padding:18px 16px 60px}h1{font-size:1.35rem;margin:0 0 4px}
 .sub{color:var(--t2);font-size:.82rem}.badge{display:inline-block;padding:1px 8px;border-radius:99px;font-size:.75rem;font-weight:700;margin-left:6px}
-.b-live{background:#05966922;color:var(--ok)}.b-closed{background:#2563eb22;color:var(--ac)}.b-idle{background:#64748b22;color:var(--t2)}
+.b-static{background:#2563eb22;color:var(--ac)}.b-live{background:#05966922;color:var(--ok)}.b-closed{background:#2563eb22;color:var(--ac)}.b-idle{background:#64748b22;color:var(--t2)}
 .tabs{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 10px}.tabs button{border:1px solid var(--b);background:var(--s);color:var(--t2);
 padding:5px 11px;border-radius:99px;cursor:pointer;font-size:.82rem}.tabs button.on{background:var(--ac);border-color:var(--ac);color:#fff}
 .tabs b{margin-left:4px}.grid{display:grid;grid-template-columns:1fr 330px;gap:14px}@media(max-width:980px){.grid{grid-template-columns:1fr}}
@@ -20,7 +20,7 @@ tbody tr{cursor:pointer}.up{color:var(--up)}.dn{color:var(--dn)}.st{font-weight:
 .kv{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px dashed var(--b);font-size:.84rem}.note{color:var(--t2);font-size:.76rem;margin-top:8px}
 .empty{padding:30px;text-align:center;color:var(--t2)}
 </style></head><body><div class="wrap">
-<h1>52주 신고가 매매 <span id="mode" class="badge b-idle">대기</span></h1>
+<div class="sub" id="nav"></div><h1>52주 신고가 매매 <span id="mode" class="badge b-idle">대기</span></h1>
 <div class="sub" id="meta">불러오는 중…</div>
 <div class="sub">후보 검토 우선순위용입니다. 점수는 매수 신호가 아니며 <b>주문 기능은 없습니다.</b></div>
 <div class="tabs" id="tabs"></div>
@@ -35,13 +35,14 @@ tbody tr{cursor:pointer}.up{color:var(--up)}.dn{color:var(--dn)}.st{font-weight:
 var TABS=[["near","신고가 접근",["WATCH","NEAR","READY"]],["ready","READY",["READY"]],["today","오늘 돌파",["INTRADAY_BREAKOUT"]],
 ["conf","종가 확정",["CONFIRMED_BREAKOUT"]],["failed","FAILED",["FAILED_BREAKOUT"]],["ext","EXTENDED",["EXTENDED"]],
 ["wait","재돌파 대기",["REBREAKOUT_WAIT"]],["re","재돌파 발생",["REBREAKOUT"]]];
+var STATIC=null;
 var DATA={rows:[],mode:"idle",day:""},tab="near",sel=(location.hash.match(/sym=(\w+)/)||[])[1]||"";
 var $=function(i){return document.getElementById(i)},fm=function(n,d){return n==null?"-":Number(n).toLocaleString("ko-KR",{maximumFractionDigits:d||0})};
-function tabRows(k){var s=TABS.filter(function(t){return t[0]===k})[0][2];return DATA.rows.filter(function(r){return s.indexOf(r.state)>=0})}
+function tabRows(k){var s=TABS.filter(function(t){return t[0]===k})[0][2];return DATA.rows.filter(function(r){return s.indexOf(r.state)>=0||(k==="today"&&r.broke_today)})}
 function score(r){return r.live?r.live.live_score:r.static_score||0}
 function render(){
- $("mode").textContent={live:"장중 실시간",closed:"종가 확정",idle:"대기"}[DATA.mode]||DATA.mode;$("mode").className="badge b-"+DATA.mode;
- $("meta").textContent="거래일 "+(DATA.day||"-")+" · 추적 "+DATA.rows.length+"종목(게이트 통과) · 갱신 "+new Date().toLocaleTimeString("ko-KR");
+ $("mode").textContent={live:"장중 실시간",closed:"종가 확정",idle:"대기",static:"장 마감 후 스냅샷"}[DATA.mode]||DATA.mode;$("mode").className="badge b-"+DATA.mode;
+ $("meta").textContent=STATIC?("기준일 "+DATA.day+(DATA.provisional?"(당일은 장 마감 직후 한국투자증권 자료)":"")+" · 게이트 통과 "+DATA.rows.length+"종목 · 생성 "+DATA.generated_at+" · 일봉으로 재현한 장 마감 후 상태이며 장중 실시간이 아닙니다"):("거래일 "+(DATA.day||"-")+" · 추적 "+DATA.rows.length+"종목(게이트 통과) · 갱신 "+new Date().toLocaleTimeString("ko-KR"));
  $("tabs").innerHTML=TABS.map(function(t){return '<button class="'+(t[0]===tab?"on":"")+'" data-t="'+t[0]+'">'+t[1]+'<b>'+tabRows(t[0]).length+'</b></button>'}).join("");
  var rs=tabRows(tab).sort(function(a,b){return score(b)-score(a)||b.gap_pct-a.gap_pct});
  $("empty").style.display=rs.length?"none":"block";
@@ -62,5 +63,5 @@ document.addEventListener("click",function(ev){var t=ev.target.closest("[data-t]
 ["acct","rpct","spct"].forEach(function(i){$(i).addEventListener("input",plan)});
 function apply(d){DATA=d;render()}
 function poll(){fetch("/api/rows").then(function(r){return r.json()}).then(apply).catch(function(){})}
-poll();if(window.EventSource){var es=new EventSource("/api/stream");es.addEventListener("rows",function(e){apply(JSON.parse(e.data))});es.onerror=function(){setTimeout(poll,3000)}}else{setInterval(poll,5000)}
+if(STATIC){apply(STATIC);$("nav").innerHTML='<a href="index.html">← 오디션 피라미딩</a>'}else{poll();if(window.EventSource){var es=new EventSource("/api/stream");es.addEventListener("rows",function(e){apply(JSON.parse(e.data))});es.onerror=function(){setTimeout(poll,3000)}}else{setInterval(poll,5000)}}
 </script></div></body></html>

@@ -141,5 +141,5 @@ class Engine:
                         "static_score": b.get("score_total"), "live": self.live.get(s),
                         "rs1m": b.get("rs1m"), "rs3m": b.get("rs3m"), "fund_status": b.get("fund_status"),
                         "ma5w": b.get("ma5w"), "avg_val20": b.get("avg_val20"), "caution": b.get("caution"),
-                        "since": st.since, "breakout_level": st.breakout_level or None})
+                        "since": st.since, "breakout_level": st.breakout_level or None, "broke_today": bool(st.broke_today)})
         return out

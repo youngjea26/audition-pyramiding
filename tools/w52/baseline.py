@@ -58,7 +58,7 @@ def load_days(root):
 
 def build_series(krx, dates, code):
     """날짜별 (종가, 고가, 저가, 거래량, 거래대금, 상장주식수)를 만들고 분할을 보정한다. 결측은 건너뛴 채 날짜 목록과 함께 돌려준다."""
-    ds, cl, hi, lo, vo, va, sh = [], [], [], [], [], [], []
+    ds, cl, hi, lo, op, vo, va, sh = [], [], [], [], [], [], [], []
     miss = []                      # 날짜별로 고가·저가가 없어 종가로 대신한 날(1) 표시
     for d in dates:
         r = krx[d].get(code)
@@ -73,12 +73,13 @@ def build_series(krx, dates, code):
             miss.append(1)
         else:
             miss.append(0)
-        ds.append(d), cl.append(c), hi.append(max(h, c)), lo.append(min(l, c))
+        o = int(r.get("TDD_OPNPRC") or 0) or c
+        ds.append(d), cl.append(c), hi.append(max(h, c, o)), lo.append(min(l, c, o)), op.append(o)
         vo.append(int(r.get("ACC_TRDVOL") or 0)), va.append(int(r.get("ACC_TRDVAL") or 0)), sh.append(int(r["LIST_SHRS"] or 0))
     if not ds:
         return None
-    cl, hi, lo = ix.adjust_splits(cl, sh, hi, lo)
-    return {"ds": ds, "close": cl, "high": hi, "low": lo, "vol": vo, "val": va, "miss": miss}
+    cl, hi, lo, op = ix.adjust_splits(cl, sh, hi, lo, op)
+    return {"ds": ds, "close": cl, "high": hi, "low": lo, "open": op, "vol": vo, "val": va, "miss": miss}
 
 
 # ───────────────────────── 실적 상태 (docs/w52_spec.md §2)
@@ -274,6 +275,7 @@ def run(root, db_path=None):
         m["score"] = static_score(m, atr_rank.get(c))
 
     save(root, db_path, D, metrics, prov)
+    save_replay(root, D, metrics, series)
     return D, metrics, prov
 
 
@@ -301,6 +303,21 @@ def save(root, db_path, D, metrics, prov):
     payload = {"asof": D, "provisional": D in prov, "generated_at": datetime.now(KST).isoformat(timespec="seconds"),
                "stocks": [{k: v for k, v in m.items() if k != "kis_w52"} for m in metrics.values()]}
     (out / "baseline.json").write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+
+
+def save_replay(root, D, metrics, series):
+    """게이트 통과 종목의 상태를 일봉으로 재현해 저장한다(정적 페이지용). 서버 없이도 장 마감 후 상태를 볼 수 있다."""
+    from w52 import replay as R
+    out, events = {}, []
+    for c, m in metrics.items():
+        if not m["gate_pass"]:
+            continue
+        st, ev = R.replay_stock(c, series[c])
+        out[c] = {"state": R.end_of_day_state(st, m["gap_to_high"] * 100), "since": st.since,
+                  "broke_today": bool(st.broke_today), "breakout_level": st.breakout_level or None}
+        events += [dict(e, symbol=c) for e in ev]
+    payload = {"asof": D, "states": out, "events": sorted(events, key=lambda e: (e["day"], e["symbol"]))}
+    (root / "cache" / "w52" / "static_states.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
 def summary(D, metrics):

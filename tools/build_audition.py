@@ -510,6 +510,8 @@ assert "site-bar" in line(784) and line(787).startswith("</div></div>")
 for n in (784, 785, 786, 787):
     L[n - 1] = None
 rep(789, "오늘의 시장 · 오디션 피라미딩", f"오디션 피라미딩 · {M} 복제본")
+must(788, '<div class="wrap paper">')
+L[787] = L[787] + '\n<div class="sub" style="margin-bottom:10px"><a href="w52.html">52주 신고가 매매 →</a></div>'
 rep(791, "시총 1조 이상", M_DYN)
 must(793, '<div class="stats">')
 L[792] = (
